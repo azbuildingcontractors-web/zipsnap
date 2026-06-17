@@ -234,6 +234,7 @@
       <button class="btn-ghost" id="loadCfBtn">Load custom fields</button>
       <div id="cfOut" class="muted" style="margin-top:8px"></div>
       <div id="cfFields"></div>
+      <div id="cfDebug" class="muted" style="margin-top:12px;white-space:pre-wrap;font-size:10px;line-height:1.35;word-break:break-all"></div>
     </div>
 
     <div class="card">
@@ -465,6 +466,7 @@ document.getElementById('saveBtn').onclick=async()=>{
     // stay on the review screen so the error is readable; let the user fix & retry
     status.className='banner err';
     status.innerHTML='<b>Save failed.</b> '+escapeHtml(err.message)+
+      '<br><br><b>Sent custom fields:</b> '+escapeHtml(JSON.stringify(lastCfv||{}))+
       '<br>Fix the issue and tap Save again, or Discard.';
   }
 };
@@ -490,6 +492,7 @@ async function pave(query){
   return j; // pave returns the resolved query tree
 }
 
+let lastCfv=null; // last custom-field payload sent (for diagnostics)
 /* Create the vendor account, then best-effort add a contact.
    NOTE: createAccount(organizationId,name,type) is confirmed. Field names for the
    contact/extra details may need tweaking against your account — see README. */
@@ -512,6 +515,7 @@ async function createVendor(rec){
   if(settings.specId){ cfv[settings.specId]= d.trade || cfv[settings.specId] || 'General'; }
   Object.keys(cfv).forEach(k=>{ if(cfv[k]===''||cfv[k]==null) delete cfv[k]; });
   if(Object.keys(cfv).length) acctArgs.customFieldValues=cfv;
+  lastCfv=cfv;
   const create=await pave({
     $:{grantKey:settings.grant},
     createAccount:{
@@ -664,6 +668,7 @@ document.getElementById('loadCfBtn').onclick=async()=>{
     LS.set('zs_settings',settings);
     renderCfFields();
     out.innerHTML='Loaded '+settings.cfList.length+' field(s). Trade field auto-selected; COI fields defaulted to No. Adjust any below if needed.';
+    try{ document.getElementById('cfDebug').textContent='DEBUG (screenshot this for support):\n'+JSON.stringify(fields,null,1).slice(0,2000); }catch(e){}
   }catch(e){ out.textContent='Could not load fields: '+e.message; }
 };
 function renderKeyList(){
