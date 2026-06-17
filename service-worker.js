@@ -1,5 +1,7 @@
-/* Zipsnap service worker — caches the app shell so it opens offline. */
-const CACHE = 'zipsnap-v1';
+/* Zipsnap service worker — app shell cache.
+   index.html is served NETWORK-FIRST so new deploys show up immediately;
+   it only falls back to cache when the phone is offline. Bump CACHE on any change. */
+const CACHE = 'zipsnap-v3';
 const SHELL = [
   './',
   './index.html',
@@ -22,13 +24,31 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const req = e.request;
-  // Never cache API calls (OpenAI / JobTread) — always go to network.
+  // Never touch API calls (OpenAI / JobTread) — always live network.
   if (req.method !== 'GET' || /api\.openai\.com|api\.jobtread\.com/.test(req.url)) return;
+
+  const url = new URL(req.url);
+  const isDoc = req.mode === 'navigate' || req.destination === 'document'
+    || url.pathname.endsWith('/') || url.pathname.endsWith('index.html');
+
+  if (isDoc) {
+    // network-first: get the freshest app, fall back to cache when offline
+    e.respondWith(
+      fetch(req).then(res => {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put('./index.html', copy)).catch(() => {});
+        return res;
+      }).catch(() => caches.match(req).then(hit => hit || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // other assets: cache-first for speed
   e.respondWith(
     caches.match(req).then(hit => hit || fetch(req).then(res => {
       const copy = res.clone();
-      caches.open(CACHE).then(c => c.put(req, copy)).catch(()=>{});
+      caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
       return res;
-    }).catch(() => caches.match('./index.html')))
+    }))
   );
 });
