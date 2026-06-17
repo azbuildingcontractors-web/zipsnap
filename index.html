@@ -229,6 +229,15 @@
       <div id="settingsSaved" class="banner ok hidden" style="margin-top:10px">Saved.</div>
     </div>
     <div class="card">
+      <h2>Required custom fields</h2>
+      <p class="muted">If JobTread requires a custom field on vendors (e.g. "Specialities"), load your fields and pick which one Zipsnap fills with the trade.</p>
+      <button class="btn-ghost" id="loadCfBtn">Load custom fields</button>
+      <div id="cfOut" class="muted" style="margin-top:8px"></div>
+      <label>Fill this field with the trade</label>
+      <select id="cfSelect"></select>
+    </div>
+
+    <div class="card">
       <h2>Test connection</h2>
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
@@ -441,10 +450,10 @@ document.getElementById('saveBtn').onclick=async()=>{
     status.textContent='✓ Vendor created in JobTread.';
     finishAfterSave();
   }catch(err){
-    enqueue(rec);
+    // stay on the review screen so the error is readable; let the user fix & retry
     status.className='banner err';
-    status.textContent='Save failed ('+err.message+'). Added to queue to retry.';
-    finishAfterSave();
+    status.innerHTML='<b>Save failed.</b> '+escapeHtml(err.message)+
+      '<br>Fix the issue and tap Save again, or Discard.';
   }
 };
 function finishAfterSave(){
@@ -485,10 +494,16 @@ async function createVendor(rec){
     'Added by Zipsnap'
   ].filter(Boolean).join('\n');
 
+  const acctArgs={organizationId:settings.org, name:d.company, type:'vendor'};
+  // fill any required custom field (e.g. "Specialities") with the trade
+  if(settings.specId){
+    acctArgs.customFieldValues={};
+    acctArgs.customFieldValues[settings.specId]= d.trade || settings.specDefault || 'General';
+  }
   const create=await pave({
     $:{grantKey:settings.grant},
     createAccount:{
-      $:{organizationId:settings.org, name:d.company, type:'vendor'},
+      $:acctArgs,
       createdAccount:{id:{},name:{},type:{}}
     }
   });
@@ -559,7 +574,46 @@ function fillSettings(){
   document.getElementById('s_model').value=settings.model||'gpt-4o-mini';
   document.getElementById('s_proxy').value=settings.proxy||'';
   renderKeyList();
+  renderCfSelect();
 }
+function renderCfSelect(){
+  const sel=document.getElementById('cfSelect'); sel.innerHTML='';
+  const none=document.createElement('option'); none.value=''; none.textContent='— none —'; sel.appendChild(none);
+  (settings.cfList||[]).forEach(f=>{ const o=document.createElement('option'); o.value=f.id; o.textContent=f.name; sel.appendChild(o); });
+  sel.value=settings.specId||'';
+}
+// Find the org's custom fields (tries a couple of query shapes).
+async function loadCustomFields(){
+  const tries=[
+    {q:{organization:{$:{id:settings.org}, customFields:{$:{size:200}, nodes:{id:{},name:{}}}}},
+     pick:r=>r.organization?.customFields?.nodes},
+    {q:{organization:{$:{id:settings.org}, customFields:{nodes:{id:{},name:{}}}}},
+     pick:r=>r.organization?.customFields?.nodes}
+  ];
+  let lastErr='';
+  for(const t of tries){
+    try{ const res=await pave({$:{grantKey:settings.grant}, ...t.q}); const n=t.pick(res); if(Array.isArray(n)) return n; }
+    catch(e){ lastErr=e.message; }
+  }
+  throw new Error(lastErr||'no customFields available');
+}
+document.getElementById('loadCfBtn').onclick=async()=>{
+  const out=document.getElementById('cfOut');
+  if(!settings.grant||!settings.org){ out.textContent='Enter your Grant Key and Org ID (above) and Save first.'; return; }
+  out.innerHTML='<span class="spin"></span>Loading your custom fields…';
+  try{
+    const fields=await loadCustomFields();
+    settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id}));
+    if(!settings.specId){ const m=settings.cfList.find(f=>/special|trade|categor/i.test(f.name)); if(m) settings.specId=m.id; }
+    LS.set('zs_settings',settings);
+    renderCfSelect();
+    out.innerHTML='Loaded '+settings.cfList.length+' field(s). '+
+      (settings.specId?'Auto-picked one that looks right — confirm below.':'Choose the required one below.');
+  }catch(e){ out.textContent='Could not load fields: '+e.message; }
+};
+document.getElementById('cfSelect').onchange=e=>{
+  settings.specId=e.target.value; LS.set('zs_settings',settings);
+};
 function renderKeyList(){
   const list=document.getElementById('keyList');
   const sel=document.getElementById('s_activekey');
