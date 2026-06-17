@@ -233,8 +233,7 @@
       <p class="muted">If JobTread requires a custom field on vendors (e.g. "Specialities"), load your fields and pick which one Zipsnap fills with the trade.</p>
       <button class="btn-ghost" id="loadCfBtn">Load custom fields</button>
       <div id="cfOut" class="muted" style="margin-top:8px"></div>
-      <label>Fill this field with the trade</label>
-      <select id="cfSelect"></select>
+      <div id="cfFields"></div>
     </div>
 
     <div class="card">
@@ -351,14 +350,14 @@ async function handleImage(dataUrl){
 const EXTRACT_PROMPT=`You read business cards and the branding/signage on commercial vehicles (truck wraps, van lettering).
 Extract the vendor's details. If the image is a vehicle, the company name is the big branded name and the trade is implied by the signage.
 Return ONLY a JSON object with these keys (use "" when unknown):
-company, contact, phone, email, website, address, notes, trade.
-For "trade" pick the closest of: General Contractor, Plumbing, Electrical, HVAC, Roofing, Concrete/Masonry, Framing/Carpentry, Drywall, Painting, Flooring, Landscaping, Excavation, Supplier/Materials, Equipment Rental, Inspection, Engineering/Architecture, Other.`;
+company, contact, phone, email, website, address, notes, trade.`;
 
 async function extractFields(dataUrl){
+  const promptText=EXTRACT_PROMPT+'\nFor "trade", pick the single closest match from this list: '+tradeOptions().join(', ')+'.';
   const body={
     model: settings.model||'gpt-4o-mini',
     messages:[{role:'user',content:[
-      {type:'text',text:EXTRACT_PROMPT},
+      {type:'text',text:promptText},
       {type:'image_url',image_url:{url:dataUrl}}
     ]}],
     response_format:{type:'json_object'},
@@ -377,7 +376,16 @@ async function extractFields(dataUrl){
 
 /* ---------------- review ---------------- */
 const tradeSel=document.getElementById('f_trade');
-TRADES.forEach(t=>{const o=document.createElement('option');o.textContent=t;tradeSel.appendChild(o);});
+// trade options come from the JobTread "Specialties" field once loaded, else a built-in list
+function tradeOptions(){
+  const f=(settings.cfList||[]).find(x=>x.id===settings.specId);
+  if(f && f.options && f.options.length) return f.options;
+  return TRADES.filter(t=>t!=='(auto)');
+}
+function populateTrade(){
+  const opts=tradeOptions(); tradeSel.innerHTML='';
+  opts.forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;tradeSel.appendChild(o);});
+}
 
 function openReview(rec){
   const f=rec.fields||{};
@@ -388,7 +396,11 @@ function openReview(rec){
   document.getElementById('f_website').value=f.website||'';
   document.getElementById('f_address').value=f.address||'';
   document.getElementById('f_notes').value=f.notes||'';
-  tradeSel.value=TRADES.includes(f.trade)?f.trade:'(auto)';
+  populateTrade();
+  const opts=tradeOptions();
+  const guess=String(f.trade||'').toLowerCase();
+  const match=opts.find(o=>o.toLowerCase()===guess);
+  tradeSel.value=match || (opts.includes('Other')?'Other':(opts[0]||''));
   document.getElementById('reviewThumb').src=rec.photo;
   document.getElementById('saveStatus').classList.add('hidden');
   document.getElementById('dupBanner').classList.add('hidden');
@@ -404,7 +416,7 @@ function readForm(){
     website:document.getElementById('f_website').value.trim(),
     address:document.getElementById('f_address').value.trim(),
     notes:document.getElementById('f_notes').value.trim(),
-    trade:tradeSel.value==='(auto)'?'':tradeSel.value
+    trade:tradeSel.value
   };
 }
 document.getElementById('cancelReview').onclick=()=>{ current=null; show('capture'); };
@@ -495,11 +507,11 @@ async function createVendor(rec){
   ].filter(Boolean).join('\n');
 
   const acctArgs={organizationId:settings.org, name:d.company, type:'vendor'};
-  // fill any required custom field (e.g. "Specialities") with the trade
-  if(settings.specId){
-    acctArgs.customFieldValues={};
-    acctArgs.customFieldValues[settings.specId]= d.trade || settings.specDefault || 'General';
-  }
+  // custom field values: saved defaults for required fields, plus the trade into the chosen field
+  const cfv=Object.assign({}, settings.cfDefaults||{});
+  if(settings.specId){ cfv[settings.specId]= d.trade || cfv[settings.specId] || 'General'; }
+  Object.keys(cfv).forEach(k=>{ if(cfv[k]===''||cfv[k]==null) delete cfv[k]; });
+  if(Object.keys(cfv).length) acctArgs.customFieldValues=cfv;
   const create=await pave({
     $:{grantKey:settings.grant},
     createAccount:{
@@ -574,17 +586,52 @@ function fillSettings(){
   document.getElementById('s_model').value=settings.model||'gpt-4o-mini';
   document.getElementById('s_proxy').value=settings.proxy||'';
   renderKeyList();
-  renderCfSelect();
+  renderCfFields();
 }
-function renderCfSelect(){
-  const sel=document.getElementById('cfSelect'); sel.innerHTML='';
-  const none=document.createElement('option'); none.value=''; none.textContent='— none —'; sel.appendChild(none);
-  (settings.cfList||[]).forEach(f=>{ const o=document.createElement('option'); o.value=f.id; o.textContent=f.name; sel.appendChild(o); });
-  sel.value=settings.specId||'';
+function renderCfFields(){
+  const box=document.getElementById('cfFields'); box.innerHTML='';
+  settings.cfDefaults=settings.cfDefaults||{};
+  (settings.cfList||[]).forEach(f=>{
+    const wrap=document.createElement('div');
+    wrap.style.cssText='margin-top:10px;border-top:1px solid var(--line);padding-top:10px';
+    const head=document.createElement('div');
+    head.style.cssText='display:flex;align-items:center;gap:10px;margin-bottom:6px';
+    const nm=document.createElement('b'); nm.style.fontSize='13px'; nm.textContent=f.name;
+    const lab=document.createElement('label');
+    lab.style.cssText='margin:0;text-transform:none;letter-spacing:0;font-size:11px;display:flex;align-items:center;gap:5px;color:var(--muted)';
+    const rb=document.createElement('input'); rb.type='radio'; rb.name='tradefield'; rb.style.width='auto';
+    rb.checked=settings.specId===f.id;
+    rb.onclick=()=>{ settings.specId=f.id; LS.set('zs_settings',settings); };
+    lab.appendChild(rb); lab.appendChild(document.createTextNode('use trade'));
+    head.appendChild(nm); head.appendChild(lab);
+    let inp;
+    if(f.options && f.options.length){
+      inp=document.createElement('select');
+      const b=document.createElement('option'); b.value=''; b.textContent='— choose default —'; inp.appendChild(b);
+      f.options.forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; inp.appendChild(o); });
+      inp.value=settings.cfDefaults[f.id]||'';
+      inp.onchange=()=>{ settings.cfDefaults[f.id]=inp.value; LS.set('zs_settings',settings); };
+    } else {
+      inp=document.createElement('input');
+      inp.placeholder='default value to always send (optional)';
+      inp.value=settings.cfDefaults[f.id]||'';
+      inp.oninput=()=>{ settings.cfDefaults[f.id]=inp.value; LS.set('zs_settings',settings); };
+    }
+    wrap.appendChild(head); wrap.appendChild(inp); box.appendChild(wrap);
+  });
 }
-// Find the org's custom fields (tries a couple of query shapes).
+// turn whatever JobTread returns for a field's options into a plain string array
+function normalizeOptions(o){
+  if(!o) return [];
+  if(typeof o==='string'){ try{ o=JSON.parse(o); }catch{ return []; } }
+  if(!Array.isArray(o)){ if(o && typeof o==='object'){ o=Object.values(o); } else { return []; } }
+  return o.map(x=> typeof x==='string'? x : (x&&(x.name||x.value||x.label||x.id))||'').filter(Boolean);
+}
+// Find the org's custom fields (tries query shapes, richest first).
 async function loadCustomFields(){
   const tries=[
+    {q:{organization:{$:{id:settings.org}, customFields:{$:{size:200}, nodes:{id:{},name:{},type:{},options:{}}}}},
+     pick:r=>r.organization?.customFields?.nodes},
     {q:{organization:{$:{id:settings.org}, customFields:{$:{size:200}, nodes:{id:{},name:{}}}}},
      pick:r=>r.organization?.customFields?.nodes},
     {q:{organization:{$:{id:settings.org}, customFields:{nodes:{id:{},name:{}}}}},
@@ -603,16 +650,21 @@ document.getElementById('loadCfBtn').onclick=async()=>{
   out.innerHTML='<span class="spin"></span>Loading your custom fields…';
   try{
     const fields=await loadCustomFields();
-    settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id}));
+    settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id,type:f.type||'',options:normalizeOptions(f.options)}));
+    settings.cfDefaults=settings.cfDefaults||{};
+    // auto-pick the Specialties field as the trade field
     if(!settings.specId){ const m=settings.cfList.find(f=>/special|trade|categor/i.test(f.name)); if(m) settings.specId=m.id; }
+    // auto-default any COI field to "No" (matching its actual option spelling)
+    settings.cfList.forEach(f=>{
+      if(/coi/i.test(f.name) && !settings.cfDefaults[f.id]){
+        const no=(f.options||[]).find(o=>/^no$/i.test(o)) || 'No';
+        settings.cfDefaults[f.id]=no;
+      }
+    });
     LS.set('zs_settings',settings);
-    renderCfSelect();
-    out.innerHTML='Loaded '+settings.cfList.length+' field(s). '+
-      (settings.specId?'Auto-picked one that looks right — confirm below.':'Choose the required one below.');
+    renderCfFields();
+    out.innerHTML='Loaded '+settings.cfList.length+' field(s). Trade field auto-selected; COI fields defaulted to No. Adjust any below if needed.';
   }catch(e){ out.textContent='Could not load fields: '+e.message; }
-};
-document.getElementById('cfSelect').onchange=e=>{
-  settings.specId=e.target.value; LS.set('zs_settings',settings);
 };
 function renderKeyList(){
   const list=document.getElementById('keyList');
