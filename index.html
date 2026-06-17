@@ -631,29 +631,34 @@ function normalizeOptions(o){
   if(!Array.isArray(o)){ if(o && typeof o==='object'){ o=Object.values(o); } else { return []; } }
   return o.map(x=> typeof x==='string'? x : (x&&(x.name||x.value||x.label||x.id))||'').filter(Boolean);
 }
-// Find the org's custom fields (tries query shapes, richest first).
+// Probe several query shapes; keep the one returning the most fields, log every result.
 async function loadCustomFields(){
-  const tries=[
-    {q:{organization:{$:{id:settings.org}, customFields:{$:{size:200}, nodes:{id:{},name:{},type:{},options:{}}}}},
-     pick:r=>r.organization?.customFields?.nodes},
-    {q:{organization:{$:{id:settings.org}, customFields:{$:{size:200}, nodes:{id:{},name:{}}}}},
-     pick:r=>r.organization?.customFields?.nodes},
-    {q:{organization:{$:{id:settings.org}, customFields:{nodes:{id:{},name:{}}}}},
-     pick:r=>r.organization?.customFields?.nodes}
+  const O=settings.org;
+  const shapes=[
+    {n:'size200+type+options', q:{organization:{$:{id:O}, customFields:{$:{size:200}, nodes:{id:{},name:{},type:{},options:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
+    {n:'size200+options',      q:{organization:{$:{id:O}, customFields:{$:{size:200}, nodes:{id:{},name:{},options:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
+    {n:'size200',              q:{organization:{$:{id:O}, customFields:{$:{size:200}, nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
+    {n:'count200',             q:{organization:{$:{id:O}, customFields:{$:{count:200}, nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
+    {n:'first200',             q:{organization:{$:{id:O}, customFields:{$:{first:200}, nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
+    {n:'plain',                q:{organization:{$:{id:O}, customFields:{nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes}
   ];
-  let lastErr='';
-  for(const t of tries){
-    try{ const res=await pave({$:{grantKey:settings.grant}, ...t.q}); const n=t.pick(res); if(Array.isArray(n)) return n; }
-    catch(e){ lastErr=e.message; }
+  const log=[]; let best=[];
+  for(const s of shapes){
+    try{
+      const res=await pave({$:{grantKey:settings.grant}, ...s.q});
+      const nodes=s.pick(res);
+      if(Array.isArray(nodes)){ log.push(s.n+': OK '+nodes.length); if(nodes.length>best.length) best=nodes; }
+      else log.push(s.n+': no nodes');
+    }catch(e){ log.push(s.n+': ERR '+String(e.message).slice(0,70)); }
   }
-  throw new Error(lastErr||'no customFields available');
+  return {nodes:best, log};
 }
 document.getElementById('loadCfBtn').onclick=async()=>{
   const out=document.getElementById('cfOut');
   if(!settings.grant||!settings.org){ out.textContent='Enter your Grant Key and Org ID (above) and Save first.'; return; }
   out.innerHTML='<span class="spin"></span>Loading your custom fields…';
   try{
-    const fields=await loadCustomFields();
+    const {nodes:fields, log}=await loadCustomFields();
     settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id,type:f.type||'',options:normalizeOptions(f.options)}));
     settings.cfDefaults=settings.cfDefaults||{};
     // auto-pick the Specialties field as the trade field
@@ -668,7 +673,7 @@ document.getElementById('loadCfBtn').onclick=async()=>{
     LS.set('zs_settings',settings);
     renderCfFields();
     out.innerHTML='Loaded '+settings.cfList.length+' field(s). Trade field auto-selected; COI fields defaulted to No. Adjust any below if needed.';
-    try{ document.getElementById('cfDebug').textContent='DEBUG (screenshot this for support):\n'+JSON.stringify(fields,null,1).slice(0,2000); }catch(e){}
+    try{ document.getElementById('cfDebug').textContent='SHAPES:\n'+log.join('\n')+'\n\nFIELDS ('+fields.length+'):\n'+JSON.stringify(fields,null,1).slice(0,3000); }catch(e){}
   }catch(e){ out.textContent='Could not load fields: '+e.message; }
 };
 function renderKeyList(){
