@@ -635,12 +635,10 @@ function normalizeOptions(o){
 async function loadCustomFields(){
   const O=settings.org;
   const shapes=[
-    {n:'size200+type+options', q:{organization:{$:{id:O}, customFields:{$:{size:200}, nodes:{id:{},name:{},type:{},options:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
-    {n:'size200+options',      q:{organization:{$:{id:O}, customFields:{$:{size:200}, nodes:{id:{},name:{},options:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
-    {n:'size200',              q:{organization:{$:{id:O}, customFields:{$:{size:200}, nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
-    {n:'count200',             q:{organization:{$:{id:O}, customFields:{$:{count:200}, nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
-    {n:'first200',             q:{organization:{$:{id:O}, customFields:{$:{first:200}, nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
-    {n:'plain',                q:{organization:{$:{id:O}, customFields:{nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes}
+    {n:'s100+type+options', q:{organization:{$:{id:O}, customFields:{$:{size:100}, nodes:{id:{},name:{},type:{},options:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
+    {n:'s100+options',      q:{organization:{$:{id:O}, customFields:{$:{size:100}, nodes:{id:{},name:{},options:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
+    {n:'s100+type',         q:{organization:{$:{id:O}, customFields:{$:{size:100}, nodes:{id:{},name:{},type:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
+    {n:'s100',              q:{organization:{$:{id:O}, customFields:{$:{size:100}, nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes}
   ];
   const log=[]; let best=[];
   for(const s of shapes){
