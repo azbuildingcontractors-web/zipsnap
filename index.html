@@ -241,7 +241,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 23 (photo headers + diag)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 24 (photo retry)</p>
   </section>
 </main>
 
@@ -507,7 +507,15 @@ async function uploadPhotoToAccount(acctId, dataUrl, fileName){
   if(!cu||!cu.url||!cu.id) throw new Error('no upload url');
   const put=await fetch(cu.url,{method:cu.method||'PUT',headers:cu.headers||{'Content-Type':T,'x-goog-content-length-range':S+','+S},body:blob});
   if(!put.ok){ throw new Error('PUT '+put.status+' '+(await put.text()).replace(/\s+/g,' ').slice(0,90)); }
-  await pave({$:{grantKey:settings.grant}, createFile:{$:{targetType:'account',targetId:acctId,name:fileName||'zipsnap.jpg',uploadRequestId:cu.id}, createdFile:{id:{}}}});
+  // the uploaded object registers asynchronously — retry createFile until JobTread recognizes it
+  let lastErr;
+  for(let i=0;i<6;i++){
+    try{
+      await pave({$:{grantKey:settings.grant}, createFile:{$:{targetType:'account',targetId:acctId,name:fileName||'zipsnap.jpg',uploadRequestId:cu.id}, createdFile:{id:{}}}});
+      return;
+    }catch(e){ lastErr=e; await new Promise(r=>setTimeout(r,1500)); }
+  }
+  throw lastErr;
 }
 let lastCfv=null; // last custom-field payload sent (for diagnostics)
 let lastPhoto=''; // outcome of the last photo upload
