@@ -241,7 +241,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 25 (background photo)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 26 (photo org-scoped)</p>
   </section>
 </main>
 
@@ -458,9 +458,14 @@ document.getElementById('saveBtn').onclick=async()=>{
   status.innerHTML='<span class="spin"></span>Saving to JobTread…';
   try{
     await createVendor(rec);
-    status.className='banner ok';
-    status.textContent='✓ Vendor created in JobTread.';
-    finishAfterSave();
+    if(lastPhoto && lastPhoto!=='ok'){
+      status.className='banner warn';
+      status.innerHTML='✓ Vendor created. Photo result:<br>'+escapeHtml(lastPhoto)+'<br>Tap Discard to continue.';
+    } else {
+      status.className='banner ok';
+      status.textContent='✓ Vendor created in JobTread'+(lastPhoto==='ok'?' — photo attached.':'.');
+      finishAfterSave();
+    }
   }catch(err){
     // stay on the review screen so the error is readable; let the user fix & retry
     status.className='banner err';
@@ -497,18 +502,18 @@ async function pave(query){
 async function uploadPhotoToAccount(acctId, dataUrl, fileName){
   const blob=await (await fetch(dataUrl)).blob();
   const S=blob.size, T=blob.type||'image/jpeg';
-  const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:S,type:T}, createdUploadRequest:{id:{},url:{},method:{},headers:{}}}});
+  const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{organizationId:settings.org,size:S,type:T}, createdUploadRequest:{id:{},url:{},method:{},headers:{}}}});
   const cu=ur?.createUploadRequest?.createdUploadRequest;
   if(!cu||!cu.url||!cu.id) throw new Error('no upload url');
   const put=await fetch(cu.url,{method:cu.method||'PUT',headers:cu.headers||{'Content-Type':T,'x-goog-content-length-range':S+','+S},body:blob});
   if(!put.ok){ throw new Error('PUT '+put.status+' '+(await put.text()).replace(/\s+/g,' ').slice(0,90)); }
-  // the uploaded object registers asynchronously — retry createFile until JobTread recognizes it
+  // retry createFile in case the upload registers a moment later
   let lastErr;
-  for(let i=0;i<14;i++){
+  for(let i=0;i<5;i++){
     try{
       await pave({$:{grantKey:settings.grant}, createFile:{$:{targetType:'account',targetId:acctId,name:fileName||'zipsnap.jpg',uploadRequestId:cu.id}, createdFile:{id:{}}}});
       return;
-    }catch(e){ lastErr=e; await new Promise(r=>setTimeout(r,3000)); }
+    }catch(e){ lastErr=e; await new Promise(r=>setTimeout(r,2000)); }
   }
   throw lastErr;
 }
@@ -552,9 +557,11 @@ async function createVendor(rec){
       if(contactId){ await pave({$:{grantKey:settings.grant}, updateAccount:{$:{id:acctId, primaryContactId:contactId}, account:{$:{id:acctId}, id:{}}}}); }
     }catch(e){ /* best-effort */ }
   }
-  // ---- attach the captured photo (background, best-effort; registers asynchronously) ----
+  // ---- attach the captured photo ----
+  lastPhoto='';
   if(acctId && rec.photo){
-    uploadPhotoToAccount(acctId, rec.photo, (d.company||'zipsnap')+'.jpg').catch(()=>{});
+    try{ await uploadPhotoToAccount(acctId, rec.photo, (d.company||'zipsnap')+'.jpg'); lastPhoto='ok'; }
+    catch(e){ lastPhoto=String(e.message); }
   }
   return acctId;
 }
