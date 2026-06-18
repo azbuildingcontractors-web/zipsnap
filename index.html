@@ -238,11 +238,18 @@
     </div>
 
     <div class="card">
+      <h2>Photo upload (debug)</h2>
+      <p class="muted">Probes JobTread's file API against your most recently created vendor, so we can wire up photo attachment.</p>
+      <button class="btn-ghost" id="probeFileBtn">Probe file upload</button>
+      <div id="probeOut" class="muted" style="margin-top:10px;white-space:pre-wrap;font-size:10px;line-height:1.35;word-break:break-all"></div>
+    </div>
+
+    <div class="card">
       <h2>Test connection</h2>
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 10 (pick specialties)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 11 (file probe)</p>
   </section>
 </main>
 
@@ -531,6 +538,7 @@ async function createVendor(rec){
     }
   });
   const acctId=create?.createAccount?.createdAccount?.id;
+  if(acctId) LS.set('zs_lastAccount', acctId);
 
   // best-effort: attach a comment with the captured detail (won't block success)
   if(acctId){
@@ -776,6 +784,28 @@ document.getElementById('saveSettings').onclick=()=>{
   document.getElementById('settingsSaved').classList.remove('hidden');
   setTimeout(()=>document.getElementById('settingsSaved').classList.add('hidden'),1800);
   refreshNag();
+};
+// Probe JobTread's file-creation API to learn the correct operation + fields.
+document.getElementById('probeFileBtn').onclick=async()=>{
+  const out=document.getElementById('probeOut');
+  const acct=LS.get('zs_lastAccount','');
+  if(!settings.grant){ out.textContent='Enter your Grant Key and Save first.'; return; }
+  if(!acct){ out.textContent='Create a vendor first (so there is a record to attach a file to), then come back.'; return; }
+  out.innerHTML='<span class="spin"></span>Probing file API…';
+  const N=2048;
+  const tries=[
+    ['createFile target+ret', {createFile:{$:{targetType:'account',targetId:acct,name:'zs-test.jpg',contentType:'image/jpeg',size:N}, createdFile:{id:{},signedUploadUrl:{}}}}],
+    ['createFile target min', {createFile:{$:{targetType:'account',targetId:acct,name:'zs-test.jpg',contentType:'image/jpeg',size:N}, createdFile:{id:{}}}}],
+    ['createFile parent', {createFile:{$:{parentType:'account',parentId:acct,name:'zs-test.jpg',contentType:'image/jpeg',size:N}, createdFile:{id:{}}}}],
+    ['createFile bare', {createFile:{$:{targetType:'account',targetId:acct,name:'zs-test.jpg'}, createdFile:{id:{}}}}],
+    ['createDocument', {createDocument:{$:{targetType:'account',targetId:acct,name:'zs-test.jpg'}, createdDocument:{id:{}}}}]
+  ];
+  const log=[];
+  for(const [n,q] of tries){
+    try{ const res=await pave({$:{grantKey:settings.grant}, ...q}); log.push(n+': OK '+JSON.stringify(res).slice(0,260)); }
+    catch(e){ log.push(n+': ERR '+String(e.message).slice(0,200)); }
+  }
+  out.textContent='FILE PROBE (screenshot this):\n\n'+log.join('\n\n');
 };
 document.getElementById('testBtn').onclick=async()=>{
   const out=document.getElementById('testOut'); out.className='banner'; out.classList.remove('hidden');
