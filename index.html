@@ -249,7 +249,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 11 (file probe)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 12 (upload-request probe)</p>
   </section>
 </main>
 
@@ -794,11 +794,11 @@ document.getElementById('probeFileBtn').onclick=async()=>{
   out.innerHTML='<span class="spin"></span>Probing file API…';
   const N=2048;
   const tries=[
-    ['createFile target+ret', {createFile:{$:{targetType:'account',targetId:acct,name:'zs-test.jpg',contentType:'image/jpeg',size:N}, createdFile:{id:{},signedUploadUrl:{}}}}],
-    ['createFile target min', {createFile:{$:{targetType:'account',targetId:acct,name:'zs-test.jpg',contentType:'image/jpeg',size:N}, createdFile:{id:{}}}}],
-    ['createFile parent', {createFile:{$:{parentType:'account',parentId:acct,name:'zs-test.jpg',contentType:'image/jpeg',size:N}, createdFile:{id:{}}}}],
-    ['createFile bare', {createFile:{$:{targetType:'account',targetId:acct,name:'zs-test.jpg'}, createdFile:{id:{}}}}],
-    ['createDocument', {createDocument:{$:{targetType:'account',targetId:acct,name:'zs-test.jpg'}, createdDocument:{id:{}}}}]
+    ['uploadRequest id', {createUploadRequest:{$:{name:'zs-test.jpg',size:N}, createdUploadRequest:{id:{}}}}],
+    ['uploadRequest +url', {createUploadRequest:{$:{name:'zs-test.jpg',size:N}, createdUploadRequest:{id:{},url:{}}}}],
+    ['uploadRequest +signedUrl', {createUploadRequest:{$:{name:'zs-test.jpg',size:N}, createdUploadRequest:{id:{},signedUrl:{}}}}],
+    ['uploadRequest +uploadUrl', {createUploadRequest:{$:{name:'zs-test.jpg',size:N}, createdUploadRequest:{id:{},uploadUrl:{}}}}],
+    ['uploadRequest noargs', {createUploadRequest:{$:{}, createdUploadRequest:{id:{}}}}]
   ];
   const log=[];
   for(const [n,q] of tries){
