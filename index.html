@@ -234,14 +234,6 @@
       <button class="btn-ghost" id="loadCfBtn">Load custom fields</button>
       <div id="cfOut" class="muted" style="margin-top:8px"></div>
       <div id="cfFields"></div>
-      <div id="cfDebug" class="muted" style="margin-top:12px;white-space:pre-wrap;font-size:10px;line-height:1.35;word-break:break-all"></div>
-    </div>
-
-    <div class="card">
-      <h2>Photo upload (debug)</h2>
-      <p class="muted">Probes JobTread's file API against your most recently created vendor, so we can wire up photo attachment.</p>
-      <button class="btn-ghost" id="probeFileBtn">Probe file upload</button>
-      <div id="probeOut" class="muted" style="margin-top:10px;white-space:pre-wrap;font-size:10px;line-height:1.35;word-break:break-all"></div>
     </div>
 
     <div class="card">
@@ -249,7 +241,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 18 (photo upload live)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 21 (contacts + clean)</p>
   </section>
 </main>
 
@@ -514,57 +506,43 @@ async function uploadPhotoToAccount(acctId, dataUrl, fileName){
   await pave({$:{grantKey:settings.grant}, createFile:{$:{targetType:'account',targetId:acctId,name:fileName||'zipsnap.jpg',uploadRequestId:reqId}, createdFile:{id:{}}}});
 }
 let lastCfv=null; // last custom-field payload sent (for diagnostics)
-/* Create the vendor account, then best-effort add a contact.
-   NOTE: createAccount(organizationId,name,type) is confirmed. Field names for the
-   contact/extra details may need tweaking against your account — see README. */
+// Create the vendor, map fields by record type, add the primary contact, attach the photo.
 async function createVendor(rec){
   const d=rec.data;
-  const noteLines=[
-    d.contact&&('Contact: '+d.contact),
-    d.phone&&('Phone: '+d.phone),
-    d.email&&('Email: '+d.email),
-    d.website&&('Website: '+d.website),
-    d.address&&('Address: '+d.address),
-    d.trade&&('Trade: '+d.trade),
-    d.notes&&('Notes: '+d.notes),
-    'Added by Zipsnap'
-  ].filter(Boolean).join('\n');
-
-  const acctArgs={organizationId:settings.org, name:d.company, type:'vendor'};
-  // custom field values: saved defaults for required fields, plus the trade into the chosen field
+  // ---- vendor account custom fields ----
   const cfv=Object.assign({}, settings.cfDefaults||{});
-  if(settings.specId){ cfv[settings.specId]= d.trade || cfv[settings.specId] || 'General'; }
-  Object.keys(cfv).forEach(k=>{ if(cfv[k]===''||cfv[k]==null) delete cfv[k]; });
-  // coerce each value to the field's data type (boolean fields need true/false, not "No")
+  if(settings.specId) cfv[settings.specId]= d.trade || cfv[settings.specId] || 'Other';
+  const setV=(name,val)=>{ const f=vendorField(name); if(f && val) cfv[f.id]=val; };
+  setV('Website', d.website);
+  const noteF=vendorField('Notes'); if(noteF) cfv[noteF.id]='Added by Zipsnap';
+  // if there's no contact person, keep the phone/email on the vendor instead
+  if(!d.contact){ setV('Main Phone', d.phone); setV('Main Email', d.email); }
+  // coerce values to their field type (boolean -> true/false)
   const cfvOut={};
   Object.keys(cfv).forEach(id=>{
-    const meta=(settings.cfList||[]).find(f=>f.id===id);
-    if(meta && meta.type==='boolean'){ cfvOut[id]=/^(yes|true|1)$/i.test(String(cfv[id]))?true:false; }
-    else { cfvOut[id]=cfv[id]; }
+    const f=(settings.cfList||[]).find(x=>x.id===id);
+    if(f && f.type==='boolean'){ cfvOut[id]=/^(yes|true|1)$/i.test(String(cfv[id]))?true:false; }
+    else if(cfv[id]!==''&&cfv[id]!=null){ cfvOut[id]=cfv[id]; }
   });
-  if(Object.keys(cfvOut).length) acctArgs.customFieldValues=cfvOut;
   lastCfv=cfvOut;
-  const create=await pave({
-    $:{grantKey:settings.grant},
-    createAccount:{
-      $:acctArgs,
-      createdAccount:{id:{},name:{},type:{}}
-    }
-  });
+  const acctArgs={organizationId:settings.org, name:d.company, type:'vendor'};
+  if(Object.keys(cfvOut).length) acctArgs.customFieldValues=cfvOut;
+  const create=await pave({$:{grantKey:settings.grant}, createAccount:{$:acctArgs, createdAccount:{id:{}}}});
   const acctId=create?.createAccount?.createdAccount?.id;
   if(acctId) LS.set('zs_lastAccount', acctId);
 
-  // best-effort: attach a comment with the captured detail (won't block success)
-  if(acctId){
+  // ---- primary contact (the person on the card) ----
+  if(acctId && d.contact){
     try{
-      await pave({
-        $:{grantKey:settings.grant},
-        createComment:{ $:{targetType:'account', targetId:acctId, message:noteLines},
-          createdComment:{id:{}} }
-      });
-    }catch(e){ /* optional */ }
+      const ccfv={};
+      const pf=contactField('Phone'); if(pf && d.phone) ccfv[pf.id]=d.phone;
+      const ef=contactField('Email'); if(ef && d.email) ccfv[ef.id]=d.email;
+      const cc=await pave({$:{grantKey:settings.grant}, createContact:{$:{accountId:acctId, name:d.contact, customFieldValues:ccfv}, createdContact:{id:{}}}});
+      const contactId=cc?.createContact?.createdContact?.id;
+      if(contactId){ await pave({$:{grantKey:settings.grant}, updateAccount:{$:{id:acctId, primaryContactId:contactId}, account:{$:{id:acctId}, id:{}}}}); }
+    }catch(e){ /* best-effort */ }
   }
-  // best-effort: attach the captured photo to the vendor record
+  // ---- attach the captured photo ----
   if(acctId && rec.photo){
     try{ await uploadPhotoToAccount(acctId, rec.photo, (d.company||'zipsnap')+'.jpg'); }catch(e){ /* optional */ }
   }
@@ -628,35 +606,20 @@ function fillSettings(){
 function renderCfFields(){
   const box=document.getElementById('cfFields'); box.innerHTML='';
   settings.cfDefaults=settings.cfDefaults||{};
-  (settings.cfList||[]).forEach(f=>{
+  const shown=(settings.cfList||[]).filter(f=>f.targetType==='vendor' && (f.type==='boolean'||f.type==='option') && f.id!==settings.specId);
+  if(!shown.length){ box.innerHTML='<div class="muted" style="margin-top:8px">Tap “Load custom fields” to set defaults.</div>'; return; }
+  shown.forEach(f=>{
     const wrap=document.createElement('div');
     wrap.style.cssText='margin-top:10px;border-top:1px solid var(--line);padding-top:10px';
-    const head=document.createElement('div');
-    head.style.cssText='display:flex;align-items:center;gap:10px;margin-bottom:6px';
-    const nm=document.createElement('b'); nm.style.fontSize='13px'; nm.textContent=f.name;
-    const lab=document.createElement('label');
-    lab.style.cssText='margin:0;text-transform:none;letter-spacing:0;font-size:11px;display:flex;align-items:center;gap:5px;color:var(--muted)';
-    const rb=document.createElement('input'); rb.type='radio'; rb.name='tradefield'; rb.style.width='auto';
-    rb.checked=settings.specId===f.id;
-    rb.onclick=()=>{ settings.specId=f.id; LS.set('zs_settings',settings); };
-    lab.appendChild(rb); lab.appendChild(document.createTextNode('use trade'));
-    head.appendChild(nm); head.appendChild(lab);
-    let opts=f.options;
-    if((!opts||!opts.length) && f.type==='boolean') opts=['No','Yes'];
-    let inp;
-    if(opts && opts.length){
-      inp=document.createElement('select');
-      const b=document.createElement('option'); b.value=''; b.textContent='— choose default —'; inp.appendChild(b);
-      opts.forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; inp.appendChild(o); });
-      inp.value=settings.cfDefaults[f.id]||'';
-      inp.onchange=()=>{ settings.cfDefaults[f.id]=inp.value; LS.set('zs_settings',settings); };
-    } else {
-      inp=document.createElement('input');
-      inp.placeholder='default value to always send (optional)';
-      inp.value=settings.cfDefaults[f.id]||'';
-      inp.oninput=()=>{ settings.cfDefaults[f.id]=inp.value; LS.set('zs_settings',settings); };
-    }
-    wrap.appendChild(head); wrap.appendChild(inp); box.appendChild(wrap);
+    const nm=document.createElement('b'); nm.style.cssText='font-size:13px;display:block;margin-bottom:6px';
+    nm.textContent=f.name+(f.required?' (required)':'');
+    const opts=(f.options&&f.options.length)?f.options:(f.type==='boolean'?['No','Yes']:[]);
+    const sel=document.createElement('select');
+    const b=document.createElement('option'); b.value=''; b.textContent='— none —'; sel.appendChild(b);
+    opts.forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; sel.appendChild(o); });
+    sel.value=settings.cfDefaults[f.id]||'';
+    sel.onchange=()=>{ settings.cfDefaults[f.id]=sel.value; LS.set('zs_settings',settings); };
+    wrap.appendChild(nm); wrap.appendChild(sel); box.appendChild(wrap);
   });
 }
 // turn whatever JobTread returns for a field's options into a plain string array
@@ -666,61 +629,40 @@ function normalizeOptions(o){
   if(!Array.isArray(o)){ if(o && typeof o==='object'){ o=Object.values(o); } else { return []; } }
   return o.map(x=> typeof x==='string'? x : (x&&(x.name||x.value||x.label||x.id))||'').filter(Boolean);
 }
-// Probe several query shapes; keep the one returning the most fields, log every result.
+// Load the org's custom fields with their record type + required flag.
 async function loadCustomFields(){
-  const O=settings.org;
-  const shapes=[
-    {n:'s100+type+options', q:{organization:{$:{id:O}, customFields:{$:{size:100}, nodes:{id:{},name:{},type:{},options:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
-    {n:'s100+options',      q:{organization:{$:{id:O}, customFields:{$:{size:100}, nodes:{id:{},name:{},options:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
-    {n:'s100+type',         q:{organization:{$:{id:O}, customFields:{$:{size:100}, nodes:{id:{},name:{},type:{}}}}}, pick:r=>r.organization?.customFields?.nodes},
-    {n:'s100',              q:{organization:{$:{id:O}, customFields:{$:{size:100}, nodes:{id:{},name:{}}}}}, pick:r=>r.organization?.customFields?.nodes}
-  ];
-  const log=[]; let best=[];
-  for(const s of shapes){
-    try{
-      const res=await pave({$:{grantKey:settings.grant}, ...s.q});
-      const nodes=s.pick(res);
-      if(Array.isArray(nodes)){ log.push(s.n+': OK '+nodes.length); if(nodes.length>best.length) best=nodes; }
-      else log.push(s.n+': no nodes');
-    }catch(e){ log.push(s.n+': ERR '+String(e.message).slice(0,70)); }
-  }
-  return {nodes:best, log};
+  const res=await pave({$:{grantKey:settings.grant}, organization:{$:{id:settings.org},
+    customFields:{$:{size:100}, nodes:{id:{},name:{},type:{},targetType:{},minValuesRequired:{},options:{}}}}});
+  return res?.organization?.customFields?.nodes || [];
 }
+// field finders scoped to the vendor record and its contacts
+function vendorField(name){ return (settings.cfList||[]).find(f=>f.targetType==='vendor' && (f.name||'').toLowerCase()===name.toLowerCase()); }
+function contactField(name){ return (settings.cfList||[]).find(f=>f.targetType==='vendorContact' && (f.name||'').toLowerCase()===name.toLowerCase()); }
 document.getElementById('loadCfBtn').onclick=async()=>{
   const out=document.getElementById('cfOut');
   if(!settings.grant||!settings.org){ out.textContent='Enter your Grant Key and Org ID (above) and Save first.'; return; }
   out.innerHTML='<span class="spin"></span>Loading your custom fields…';
   try{
-    const {nodes:fields, log}=await loadCustomFields();
-    settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id,type:f.type||'',options:normalizeOptions(f.options)}));
+    const fields=await loadCustomFields();
+    settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id,type:f.type||'',targetType:f.targetType||'',required:(f.minValuesRequired||0)>0,options:normalizeOptions(f.options)}));
     settings.cfDefaults=settings.cfDefaults||{};
-    // auto-pick the Specialties field (prefer a name containing "specialit"); re-pick if current looks wrong
-    const curSpec=settings.cfList.find(f=>f.id===settings.specId);
-    if(!curSpec || !/specialit/i.test(curSpec.name)){
-      const specPick=settings.cfList.find(f=>/specialit/i.test(f.name)) || settings.cfList.find(f=>/special|trade|categor/i.test(f.name));
-      if(specPick) settings.specId=specPick.id;
-    }
-    // auto-default any COI field to "No" (matching its actual option spelling)
-    settings.cfList.forEach(f=>{
-      if(/coi/i.test(f.name) && /(required|on file)/i.test(f.name) && !settings.cfDefaults[f.id]){
-        const no=(f.options||[]).find(o=>/^no$/i.test(o)) || 'No';
-        settings.cfDefaults[f.id]=no;
-      }
+    // Specialties = the vendor field named like "Specialit…"
+    const spec=settings.cfList.find(f=>f.targetType==='vendor' && /specialit/i.test(f.name));
+    if(spec) settings.specId=spec.id;
+    // sensible defaults for required vendor fields
+    settings.cfList.filter(f=>f.targetType==='vendor' && f.id!==settings.specId).forEach(f=>{
+      if(settings.cfDefaults[f.id]!=null && settings.cfDefaults[f.id]!=='') return;
+      if(f.type==='boolean' && f.required) settings.cfDefaults[f.id]='No';
+      else if(f.type==='option' && /^status$/i.test(f.name)){ const nu=(f.options||[]).find(o=>/never\s*used/i.test(o)); if(nu) settings.cfDefaults[f.id]=nu; }
     });
-    // clean up bad leftover defaults: "Yes"/"No" only belongs on boolean or option (dropdown) fields,
-    // not on date/text fields (e.g. the COI expiration-date fields)
-    settings.cfList.forEach(f=>{
-      const v=settings.cfDefaults[f.id];
-      if(v!=null && /^(yes|no)$/i.test(String(v)) && f.type!=='boolean' && f.type!=='option'){
-        delete settings.cfDefaults[f.id];
-      }
+    // prune any stale/wrong defaults from earlier versions (only vendor option/boolean fields keep defaults)
+    Object.keys(settings.cfDefaults).forEach(id=>{
+      const f=settings.cfList.find(x=>x.id===id);
+      if(!f || f.targetType!=='vendor' || !(f.type==='boolean'||f.type==='option')) delete settings.cfDefaults[id];
     });
     LS.set('zs_settings',settings);
     renderCfFields();
-    const specialList=settings.cfList.filter(f=>/special/i.test(f.name)).map(f=>f.name+' ['+f.id+']').join(' | ')||'none';
-    const pickedF=settings.cfList.find(f=>f.id===settings.specId);
-    out.innerHTML='Loaded '+settings.cfList.length+'. Trade → <b>'+(pickedF?escapeHtml(pickedF.name):'none')+'</b> ['+escapeHtml(settings.specId||'')+'].<br>Fields named “special…”: '+escapeHtml(specialList);
-    try{ document.getElementById('cfDebug').textContent='SHAPES:\n'+log.join('\n')+'\n\nFIELDS ('+fields.length+'):\n'+JSON.stringify(fields,null,1).slice(0,3000); }catch(e){}
+    out.innerHTML='Loaded. Trade field → <b>'+(spec?escapeHtml(spec.name):'not found')+'</b>. Defaults set for required vendor fields below.';
   }catch(e){ out.textContent='Could not load fields: '+e.message; }
 };
 function renderKeyList(){
@@ -802,39 +744,6 @@ document.getElementById('saveSettings').onclick=()=>{
   document.getElementById('settingsSaved').classList.remove('hidden');
   setTimeout(()=>document.getElementById('settingsSaved').classList.add('hidden'),1800);
   refreshNag();
-};
-// Probe JobTread's file-creation API to learn the correct operation + fields.
-document.getElementById('probeFileBtn').onclick=async()=>{
-  const out=document.getElementById('probeOut');
-  const acct=LS.get('zs_lastAccount','');
-  if(!settings.grant){ out.textContent='Enter your Grant Key and Save first.'; return; }
-  if(!acct){ out.textContent='Create a vendor first (so there is a record to attach a file to), then come back.'; return; }
-  out.innerHTML='<span class="spin"></span>Testing real upload…';
-  const log=[];
-  try{
-    // generate a tiny test jpeg
-    const c=document.createElement('canvas'); c.width=c.height=16; const x=c.getContext('2d');
-    x.fillStyle='#2f6bff'; x.fillRect(0,0,16,16);
-    const durl=c.toDataURL('image/jpeg',0.8);
-    const blob=await (await fetch(durl)).blob();
-    const S=blob.size, T=blob.type||'image/jpeg';
-    log.push('blob size='+S+' type='+T);
-    // the signed URL requires x-goog-content-length-range; find the value format GCS accepts
-    const ranges=['0,'+S, S+','+S, '0,52428800', '0,104857600', '0,2147483648'];
-    let ok=false;
-    for(const cr of ranges){
-      const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:S,type:T}, createdUploadRequest:{id:{},url:{}}}});
-      const url=ur?.createUploadRequest?.createdUploadRequest?.url;
-      try{
-        const put=await fetch(url,{method:'PUT',headers:{'Content-Type':T,'x-goog-content-length-range':cr},body:blob});
-        let extra=''; if(!put.ok) extra=' :: '+(await put.text()).replace(/\s+/g,' ').slice(0,110);
-        log.push('range "'+cr+'" -> '+put.status+(put.ok?' OK ✓✓✓':' FAIL'+extra));
-        if(put.ok){ ok=true; break; }
-      }catch(e){ log.push('range "'+cr+'" THREW '+e.message); }
-    }
-    if(ok) log.push('>>> WORKING range format found — photo upload is solved.');
-  }catch(e){ log.push('FATAL '+e.message); }
-  out.textContent='REAL UPLOAD TEST (screenshot this):\n\n'+log.join('\n\n');
 };
 document.getElementById('testBtn').onclick=async()=>{
   const out=document.getElementById('testOut'); out.className='banner'; out.classList.remove('hidden');
