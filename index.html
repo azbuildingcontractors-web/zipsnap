@@ -249,7 +249,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 15 (upload test 2)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 16 (signed-headers probe)</p>
   </section>
 </main>
 
@@ -804,21 +804,15 @@ document.getElementById('probeFileBtn').onclick=async()=>{
     const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:blob.size,type:blob.type||'image/jpeg'}, createdUploadRequest:{id:{},url:{}}}});
     const reqId=ur?.createUploadRequest?.createdUploadRequest?.id;
     const url=ur?.createUploadRequest?.createdUploadRequest?.url;
-    log.push('2) uploadRequest: id='+reqId+' url='+(url?'(got signed url)':'NONE'));
-    // step 2: PUT bytes to signed URL, capture GCS error body if it fails
+    let sh=''; try{ sh=new URL(url).searchParams.get('X-Goog-SignedHeaders')||''; }catch(e){}
+    log.push('2) id='+reqId+' SignedHeaders='+sh);
+    log.push('URL='+url);
+    // PUT bytes to the signed URL; capture GCS error body if it fails
     try{
       const put=await fetch(url,{method:'PUT',headers:{'Content-Type':blob.type||'image/jpeg'},body:blob});
       let extra=''; if(!put.ok){ extra=' :: '+(await put.text()).replace(/\s+/g,' ').slice(0,200); }
       log.push('3) PUT(withCT) '+put.status+(put.ok?' OK':' FAIL'+extra));
-    }catch(e){ log.push('3) PUT(withCT) THREW '+e.message); }
-    // step 3: createFile linking the upload to the account — no size, try arg names
-    let made=false;
-    for(const an of ['uploadRequestId','uploadRequest','fileUploadRequestId','requestId']){
-      const args={targetType:'account',targetId:acct,name:'zipsnap-test.jpg'}; args[an]=reqId;
-      try{ const cf=await pave({$:{grantKey:settings.grant}, createFile:{$:args, createdFile:{id:{}}}}); log.push('4) createFile['+an+']: OK '+JSON.stringify(cf).slice(0,140)); made=true; break; }
-      catch(e){ log.push('4) createFile['+an+']: ERR '+String(e.message).slice(0,130)); }
-    }
-    if(made) log.push('>>> createFile linked — check the vendor in JobTread for zipsnap-test.jpg');
+    }catch(e){ log.push('3) PUT THREW '+e.message); }
   }catch(e){ log.push('FATAL '+e.message); }
   out.textContent='REAL UPLOAD TEST (screenshot this):\n\n'+log.join('\n\n');
 };
