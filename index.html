@@ -242,7 +242,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap v1 · installable web app</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 8 (type-aware fields)</p>
   </section>
 </main>
 
@@ -514,8 +514,15 @@ async function createVendor(rec){
   const cfv=Object.assign({}, settings.cfDefaults||{});
   if(settings.specId){ cfv[settings.specId]= d.trade || cfv[settings.specId] || 'General'; }
   Object.keys(cfv).forEach(k=>{ if(cfv[k]===''||cfv[k]==null) delete cfv[k]; });
-  if(Object.keys(cfv).length) acctArgs.customFieldValues=cfv;
-  lastCfv=cfv;
+  // coerce each value to the field's data type (boolean fields need true/false, not "No")
+  const cfvOut={};
+  Object.keys(cfv).forEach(id=>{
+    const meta=(settings.cfList||[]).find(f=>f.id===id);
+    if(meta && meta.type==='boolean'){ cfvOut[id]=/^(yes|true|1)$/i.test(String(cfv[id]))?true:false; }
+    else { cfvOut[id]=cfv[id]; }
+  });
+  if(Object.keys(cfvOut).length) acctArgs.customFieldValues=cfvOut;
+  lastCfv=cfvOut;
   const create=await pave({
     $:{grantKey:settings.grant},
     createAccount:{
@@ -608,11 +615,13 @@ function renderCfFields(){
     rb.onclick=()=>{ settings.specId=f.id; LS.set('zs_settings',settings); };
     lab.appendChild(rb); lab.appendChild(document.createTextNode('use trade'));
     head.appendChild(nm); head.appendChild(lab);
+    let opts=f.options;
+    if((!opts||!opts.length) && f.type==='boolean') opts=['No','Yes'];
     let inp;
-    if(f.options && f.options.length){
+    if(opts && opts.length){
       inp=document.createElement('select');
       const b=document.createElement('option'); b.value=''; b.textContent='— choose default —'; inp.appendChild(b);
-      f.options.forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; inp.appendChild(o); });
+      opts.forEach(opt=>{ const o=document.createElement('option'); o.value=opt; o.textContent=opt; inp.appendChild(o); });
       inp.value=settings.cfDefaults[f.id]||'';
       inp.onchange=()=>{ settings.cfDefaults[f.id]=inp.value; LS.set('zs_settings',settings); };
     } else {
@@ -663,7 +672,7 @@ document.getElementById('loadCfBtn').onclick=async()=>{
     if(!settings.specId){ const m=settings.cfList.find(f=>/special|trade|categor/i.test(f.name)); if(m) settings.specId=m.id; }
     // auto-default any COI field to "No" (matching its actual option spelling)
     settings.cfList.forEach(f=>{
-      if(/coi/i.test(f.name) && !settings.cfDefaults[f.id]){
+      if(/coi/i.test(f.name) && /(required|on file)/i.test(f.name) && !settings.cfDefaults[f.id]){
         const no=(f.options||[]).find(o=>/^no$/i.test(o)) || 'No';
         settings.cfDefaults[f.id]=no;
       }
