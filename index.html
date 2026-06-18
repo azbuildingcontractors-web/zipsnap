@@ -242,7 +242,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 9 (clean defaults)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 10 (pick specialties)</p>
   </section>
 </main>
 
@@ -668,8 +668,12 @@ document.getElementById('loadCfBtn').onclick=async()=>{
     const {nodes:fields, log}=await loadCustomFields();
     settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id,type:f.type||'',options:normalizeOptions(f.options)}));
     settings.cfDefaults=settings.cfDefaults||{};
-    // auto-pick the Specialties field as the trade field
-    if(!settings.specId){ const m=settings.cfList.find(f=>/special|trade|categor/i.test(f.name)); if(m) settings.specId=m.id; }
+    // auto-pick the Specialties field (prefer a name containing "specialit"); re-pick if current looks wrong
+    const curSpec=settings.cfList.find(f=>f.id===settings.specId);
+    if(!curSpec || !/specialit/i.test(curSpec.name)){
+      const specPick=settings.cfList.find(f=>/specialit/i.test(f.name)) || settings.cfList.find(f=>/special|trade|categor/i.test(f.name));
+      if(specPick) settings.specId=specPick.id;
+    }
     // auto-default any COI field to "No" (matching its actual option spelling)
     settings.cfList.forEach(f=>{
       if(/coi/i.test(f.name) && /(required|on file)/i.test(f.name) && !settings.cfDefaults[f.id]){
@@ -687,7 +691,9 @@ document.getElementById('loadCfBtn').onclick=async()=>{
     });
     LS.set('zs_settings',settings);
     renderCfFields();
-    out.innerHTML='Loaded '+settings.cfList.length+' field(s). Trade field auto-selected; COI fields defaulted to No. Adjust any below if needed.';
+    const specialList=settings.cfList.filter(f=>/special/i.test(f.name)).map(f=>f.name+' ['+f.id+']').join(' | ')||'none';
+    const pickedF=settings.cfList.find(f=>f.id===settings.specId);
+    out.innerHTML='Loaded '+settings.cfList.length+'. Trade → <b>'+(pickedF?escapeHtml(pickedF.name):'none')+'</b> ['+escapeHtml(settings.specId||'')+'].<br>Fields named “special…”: '+escapeHtml(specialList);
     try{ document.getElementById('cfDebug').textContent='SHAPES:\n'+log.join('\n')+'\n\nFIELDS ('+fields.length+'):\n'+JSON.stringify(fields,null,1).slice(0,3000); }catch(e){}
   }catch(e){ out.textContent='Could not load fields: '+e.message; }
 };
