@@ -249,7 +249,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 12 (upload-request probe)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 13 (upload-url probe)</p>
   </section>
 </main>
 
@@ -792,13 +792,13 @@ document.getElementById('probeFileBtn').onclick=async()=>{
   if(!settings.grant){ out.textContent='Enter your Grant Key and Save first.'; return; }
   if(!acct){ out.textContent='Create a vendor first (so there is a record to attach a file to), then come back.'; return; }
   out.innerHTML='<span class="spin"></span>Probing file API…';
-  const N=2048;
+  const N=2048, T='image/jpeg';
   const tries=[
-    ['uploadRequest id', {createUploadRequest:{$:{name:'zs-test.jpg',size:N}, createdUploadRequest:{id:{}}}}],
-    ['uploadRequest +url', {createUploadRequest:{$:{name:'zs-test.jpg',size:N}, createdUploadRequest:{id:{},url:{}}}}],
-    ['uploadRequest +signedUrl', {createUploadRequest:{$:{name:'zs-test.jpg',size:N}, createdUploadRequest:{id:{},signedUrl:{}}}}],
-    ['uploadRequest +uploadUrl', {createUploadRequest:{$:{name:'zs-test.jpg',size:N}, createdUploadRequest:{id:{},uploadUrl:{}}}}],
-    ['uploadRequest noargs', {createUploadRequest:{$:{}, createdUploadRequest:{id:{}}}}]
+    ['ur idonly', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{}}}}],
+    ['ur +url', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{},url:{}}}}],
+    ['ur +fields+method', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{},url:{},fields:{},method:{}}}}],
+    ['ur +putUrl', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{},putUrl:{}}}}],
+    ['ur +presignedUrl', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{},presignedUrl:{}}}}]
   ];
   const log=[];
   for(const [n,q] of tries){
