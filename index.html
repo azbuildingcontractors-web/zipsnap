@@ -249,7 +249,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 13 (upload-url probe)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 14 (real upload test)</p>
   </section>
 </main>
 
@@ -791,21 +791,35 @@ document.getElementById('probeFileBtn').onclick=async()=>{
   const acct=LS.get('zs_lastAccount','');
   if(!settings.grant){ out.textContent='Enter your Grant Key and Save first.'; return; }
   if(!acct){ out.textContent='Create a vendor first (so there is a record to attach a file to), then come back.'; return; }
-  out.innerHTML='<span class="spin"></span>Probing file API…';
-  const N=2048, T='image/jpeg';
-  const tries=[
-    ['ur idonly', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{}}}}],
-    ['ur +url', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{},url:{}}}}],
-    ['ur +fields+method', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{},url:{},fields:{},method:{}}}}],
-    ['ur +putUrl', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{},putUrl:{}}}}],
-    ['ur +presignedUrl', {createUploadRequest:{$:{size:N,type:T}, createdUploadRequest:{id:{},presignedUrl:{}}}}]
-  ];
+  out.innerHTML='<span class="spin"></span>Testing real upload…';
   const log=[];
-  for(const [n,q] of tries){
-    try{ const res=await pave({$:{grantKey:settings.grant}, ...q}); log.push(n+': OK '+JSON.stringify(res).slice(0,260)); }
-    catch(e){ log.push(n+': ERR '+String(e.message).slice(0,200)); }
-  }
-  out.textContent='FILE PROBE (screenshot this):\n\n'+log.join('\n\n');
+  try{
+    // generate a tiny test jpeg
+    const c=document.createElement('canvas'); c.width=c.height=16; const x=c.getContext('2d');
+    x.fillStyle='#2f6bff'; x.fillRect(0,0,16,16);
+    const durl=c.toDataURL('image/jpeg',0.8);
+    const blob=await (await fetch(durl)).blob();
+    log.push('1) blob: size='+blob.size+' type='+blob.type);
+    // step 1: create upload request
+    const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:blob.size,type:blob.type||'image/jpeg'}, createdUploadRequest:{id:{},url:{}}}});
+    const reqId=ur?.createUploadRequest?.createdUploadRequest?.id;
+    const url=ur?.createUploadRequest?.createdUploadRequest?.url;
+    log.push('2) uploadRequest: id='+reqId+' url='+(url?'(got signed url)':'NONE'));
+    // step 2: PUT bytes to signed URL
+    let putStatus;
+    try{ const put=await fetch(url,{method:'PUT',headers:{'Content-Type':blob.type||'image/jpeg'},body:blob}); putStatus=put.status+(put.ok?' OK':' FAIL'); }
+    catch(e){ putStatus='THREW '+e.message; }
+    log.push('3) PUT to signed url: '+putStatus);
+    // step 3: createFile linking the upload to the account — try likely arg names
+    let made=false;
+    for(const an of ['uploadRequestId','uploadRequest','fileUploadRequestId','requestId']){
+      const args={targetType:'account',targetId:acct,name:'zipsnap-test.jpg',size:blob.size}; args[an]=reqId;
+      try{ const cf=await pave({$:{grantKey:settings.grant}, createFile:{$:args, createdFile:{id:{}}}}); log.push('4) createFile['+an+']: OK '+JSON.stringify(cf).slice(0,140)); made=true; break; }
+      catch(e){ log.push('4) createFile['+an+']: ERR '+String(e.message).slice(0,130)); }
+    }
+    if(made) log.push('>>> SUCCESS — check the vendor in JobTread for zipsnap-test.jpg');
+  }catch(e){ log.push('FATAL '+e.message); }
+  out.textContent='REAL UPLOAD TEST (screenshot this):\n\n'+log.join('\n\n');
 };
 document.getElementById('testBtn').onclick=async()=>{
   const out=document.getElementById('testOut'); out.className='banner'; out.classList.remove('hidden');
