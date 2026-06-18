@@ -241,7 +241,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 22 (auto-refresh fields)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 23 (photo headers + diag)</p>
   </section>
 </main>
 
@@ -458,9 +458,14 @@ document.getElementById('saveBtn').onclick=async()=>{
   status.innerHTML='<span class="spin"></span>Saving to JobTread…';
   try{
     await createVendor(rec);
-    status.className='banner ok';
-    status.textContent='✓ Vendor created in JobTread.';
-    finishAfterSave();
+    if(lastPhoto && lastPhoto!=='ok'){
+      status.className='banner warn';
+      status.innerHTML='✓ Vendor created, but the photo did not attach:<br>'+escapeHtml(lastPhoto)+'<br>Tap Discard to continue.';
+    } else {
+      status.className='banner ok';
+      status.textContent='✓ Vendor created in JobTread.';
+      finishAfterSave();
+    }
   }catch(err){
     // stay on the review screen so the error is readable; let the user fix & retry
     status.className='banner err';
@@ -492,20 +497,20 @@ async function pave(query){
 }
 
 // Upload a photo (data URL) and attach it to an account.
-// Flow: createUploadRequest{size,type} -> PUT bytes to signed URL with exact
-// x-goog-content-length-range "<size>,<size>" -> createFile{uploadRequestId}.
+// createUploadRequest returns the exact url/method/headers to use for the upload,
+// then createFile{uploadRequestId} links it to the record.
 async function uploadPhotoToAccount(acctId, dataUrl, fileName){
   const blob=await (await fetch(dataUrl)).blob();
   const S=blob.size, T=blob.type||'image/jpeg';
-  const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:S,type:T}, createdUploadRequest:{id:{},url:{}}}});
-  const reqId=ur?.createUploadRequest?.createdUploadRequest?.id;
-  const url=ur?.createUploadRequest?.createdUploadRequest?.url;
-  if(!url||!reqId) throw new Error('no upload url');
-  const put=await fetch(url,{method:'PUT',headers:{'Content-Type':T,'x-goog-content-length-range':S+','+S},body:blob});
-  if(!put.ok) throw new Error('PUT '+put.status);
-  await pave({$:{grantKey:settings.grant}, createFile:{$:{targetType:'account',targetId:acctId,name:fileName||'zipsnap.jpg',uploadRequestId:reqId}, createdFile:{id:{}}}});
+  const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:S,type:T}, createdUploadRequest:{id:{},url:{},method:{},headers:{}}}});
+  const cu=ur?.createUploadRequest?.createdUploadRequest;
+  if(!cu||!cu.url||!cu.id) throw new Error('no upload url');
+  const put=await fetch(cu.url,{method:cu.method||'PUT',headers:cu.headers||{'Content-Type':T,'x-goog-content-length-range':S+','+S},body:blob});
+  if(!put.ok){ throw new Error('PUT '+put.status+' '+(await put.text()).replace(/\s+/g,' ').slice(0,90)); }
+  await pave({$:{grantKey:settings.grant}, createFile:{$:{targetType:'account',targetId:acctId,name:fileName||'zipsnap.jpg',uploadRequestId:cu.id}, createdFile:{id:{}}}});
 }
 let lastCfv=null; // last custom-field payload sent (for diagnostics)
+let lastPhoto=''; // outcome of the last photo upload
 // Create the vendor, map fields by record type, add the primary contact, attach the photo.
 async function createVendor(rec){
   const d=rec.data;
@@ -545,8 +550,10 @@ async function createVendor(rec){
     }catch(e){ /* best-effort */ }
   }
   // ---- attach the captured photo ----
+  lastPhoto='';
   if(acctId && rec.photo){
-    try{ await uploadPhotoToAccount(acctId, rec.photo, (d.company||'zipsnap')+'.jpg'); }catch(e){ /* optional */ }
+    try{ await uploadPhotoToAccount(acctId, rec.photo, (d.company||'zipsnap')+'.jpg'); lastPhoto='ok'; }
+    catch(e){ lastPhoto=String(e.message); }
   }
   return acctId;
 }
