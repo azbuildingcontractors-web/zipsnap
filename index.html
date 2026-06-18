@@ -241,7 +241,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 24 (photo retry)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 25 (background photo)</p>
   </section>
 </main>
 
@@ -458,14 +458,9 @@ document.getElementById('saveBtn').onclick=async()=>{
   status.innerHTML='<span class="spin"></span>Saving to JobTread…';
   try{
     await createVendor(rec);
-    if(lastPhoto && lastPhoto!=='ok'){
-      status.className='banner warn';
-      status.innerHTML='✓ Vendor created, but the photo did not attach:<br>'+escapeHtml(lastPhoto)+'<br>Tap Discard to continue.';
-    } else {
-      status.className='banner ok';
-      status.textContent='✓ Vendor created in JobTread.';
-      finishAfterSave();
-    }
+    status.className='banner ok';
+    status.textContent='✓ Vendor created in JobTread.';
+    finishAfterSave();
   }catch(err){
     // stay on the review screen so the error is readable; let the user fix & retry
     status.className='banner err';
@@ -509,11 +504,11 @@ async function uploadPhotoToAccount(acctId, dataUrl, fileName){
   if(!put.ok){ throw new Error('PUT '+put.status+' '+(await put.text()).replace(/\s+/g,' ').slice(0,90)); }
   // the uploaded object registers asynchronously — retry createFile until JobTread recognizes it
   let lastErr;
-  for(let i=0;i<6;i++){
+  for(let i=0;i<14;i++){
     try{
       await pave({$:{grantKey:settings.grant}, createFile:{$:{targetType:'account',targetId:acctId,name:fileName||'zipsnap.jpg',uploadRequestId:cu.id}, createdFile:{id:{}}}});
       return;
-    }catch(e){ lastErr=e; await new Promise(r=>setTimeout(r,1500)); }
+    }catch(e){ lastErr=e; await new Promise(r=>setTimeout(r,3000)); }
   }
   throw lastErr;
 }
@@ -557,11 +552,9 @@ async function createVendor(rec){
       if(contactId){ await pave({$:{grantKey:settings.grant}, updateAccount:{$:{id:acctId, primaryContactId:contactId}, account:{$:{id:acctId}, id:{}}}}); }
     }catch(e){ /* best-effort */ }
   }
-  // ---- attach the captured photo ----
-  lastPhoto='';
+  // ---- attach the captured photo (background, best-effort; registers asynchronously) ----
   if(acctId && rec.photo){
-    try{ await uploadPhotoToAccount(acctId, rec.photo, (d.company||'zipsnap')+'.jpg'); lastPhoto='ok'; }
-    catch(e){ lastPhoto=String(e.message); }
+    uploadPhotoToAccount(acctId, rec.photo, (d.company||'zipsnap')+'.jpg').catch(()=>{});
   }
   return acctId;
 }
