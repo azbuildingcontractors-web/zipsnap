@@ -249,7 +249,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 17 (range probe)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 18 (photo upload live)</p>
   </section>
 </main>
 
@@ -499,6 +499,20 @@ async function pave(query){
   return j; // pave returns the resolved query tree
 }
 
+// Upload a photo (data URL) and attach it to an account.
+// Flow: createUploadRequest{size,type} -> PUT bytes to signed URL with exact
+// x-goog-content-length-range "<size>,<size>" -> createFile{uploadRequestId}.
+async function uploadPhotoToAccount(acctId, dataUrl, fileName){
+  const blob=await (await fetch(dataUrl)).blob();
+  const S=blob.size, T=blob.type||'image/jpeg';
+  const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:S,type:T}, createdUploadRequest:{id:{},url:{}}}});
+  const reqId=ur?.createUploadRequest?.createdUploadRequest?.id;
+  const url=ur?.createUploadRequest?.createdUploadRequest?.url;
+  if(!url||!reqId) throw new Error('no upload url');
+  const put=await fetch(url,{method:'PUT',headers:{'Content-Type':T,'x-goog-content-length-range':S+','+S},body:blob});
+  if(!put.ok) throw new Error('PUT '+put.status);
+  await pave({$:{grantKey:settings.grant}, createFile:{$:{targetType:'account',targetId:acctId,name:fileName||'zipsnap.jpg',uploadRequestId:reqId}, createdFile:{id:{}}}});
+}
 let lastCfv=null; // last custom-field payload sent (for diagnostics)
 /* Create the vendor account, then best-effort add a contact.
    NOTE: createAccount(organizationId,name,type) is confirmed. Field names for the
@@ -549,6 +563,10 @@ async function createVendor(rec){
           createdComment:{id:{}} }
       });
     }catch(e){ /* optional */ }
+  }
+  // best-effort: attach the captured photo to the vendor record
+  if(acctId && rec.photo){
+    try{ await uploadPhotoToAccount(acctId, rec.photo, (d.company||'zipsnap')+'.jpg'); }catch(e){ /* optional */ }
   }
   return acctId;
 }
