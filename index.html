@@ -241,7 +241,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 21 (contacts + clean)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 22 (auto-refresh fields)</p>
   </section>
 </main>
 
@@ -509,6 +509,8 @@ let lastCfv=null; // last custom-field payload sent (for diagnostics)
 // Create the vendor, map fields by record type, add the primary contact, attach the photo.
 async function createVendor(rec){
   const d=rec.data;
+  // make sure our field map is current (has record-type info) before mapping
+  if(fieldsStale()){ try{ await refreshFields(); }catch(e){} }
   // ---- vendor account custom fields ----
   const cfv=Object.assign({}, settings.cfDefaults||{});
   if(settings.specId) cfv[settings.specId]= d.trade || cfv[settings.specId] || 'Other';
@@ -638,29 +640,32 @@ async function loadCustomFields(){
 // field finders scoped to the vendor record and its contacts
 function vendorField(name){ return (settings.cfList||[]).find(f=>f.targetType==='vendor' && (f.name||'').toLowerCase()===name.toLowerCase()); }
 function contactField(name){ return (settings.cfList||[]).find(f=>f.targetType==='vendorContact' && (f.name||'').toLowerCase()===name.toLowerCase()); }
+function fieldsStale(){ return !settings.cfList || !settings.cfList.length || !settings.cfList.some(f=>f.targetType); }
+// Load + map custom fields and apply sensible vendor defaults. Returns the Specialties field.
+async function refreshFields(){
+  const fields=await loadCustomFields();
+  settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id,type:f.type||'',targetType:f.targetType||'',required:(f.minValuesRequired||0)>0,options:normalizeOptions(f.options)}));
+  settings.cfDefaults=settings.cfDefaults||{};
+  const spec=settings.cfList.find(f=>f.targetType==='vendor' && /specialit/i.test(f.name));
+  if(spec) settings.specId=spec.id;
+  settings.cfList.filter(f=>f.targetType==='vendor' && f.id!==settings.specId).forEach(f=>{
+    if(settings.cfDefaults[f.id]!=null && settings.cfDefaults[f.id]!=='') return;
+    if(f.type==='boolean' && f.required) settings.cfDefaults[f.id]='No';
+    else if(f.type==='option' && /^status$/i.test(f.name)){ const nu=(f.options||[]).find(o=>/never\s*used/i.test(o)); if(nu) settings.cfDefaults[f.id]=nu; }
+  });
+  Object.keys(settings.cfDefaults).forEach(id=>{
+    const f=settings.cfList.find(x=>x.id===id);
+    if(!f || f.targetType!=='vendor' || !(f.type==='boolean'||f.type==='option')) delete settings.cfDefaults[id];
+  });
+  LS.set('zs_settings',settings);
+  return spec;
+}
 document.getElementById('loadCfBtn').onclick=async()=>{
   const out=document.getElementById('cfOut');
   if(!settings.grant||!settings.org){ out.textContent='Enter your Grant Key and Org ID (above) and Save first.'; return; }
   out.innerHTML='<span class="spin"></span>Loading your custom fields…';
   try{
-    const fields=await loadCustomFields();
-    settings.cfList=fields.map(f=>({id:f.id,name:f.name||f.id,type:f.type||'',targetType:f.targetType||'',required:(f.minValuesRequired||0)>0,options:normalizeOptions(f.options)}));
-    settings.cfDefaults=settings.cfDefaults||{};
-    // Specialties = the vendor field named like "Specialit…"
-    const spec=settings.cfList.find(f=>f.targetType==='vendor' && /specialit/i.test(f.name));
-    if(spec) settings.specId=spec.id;
-    // sensible defaults for required vendor fields
-    settings.cfList.filter(f=>f.targetType==='vendor' && f.id!==settings.specId).forEach(f=>{
-      if(settings.cfDefaults[f.id]!=null && settings.cfDefaults[f.id]!=='') return;
-      if(f.type==='boolean' && f.required) settings.cfDefaults[f.id]='No';
-      else if(f.type==='option' && /^status$/i.test(f.name)){ const nu=(f.options||[]).find(o=>/never\s*used/i.test(o)); if(nu) settings.cfDefaults[f.id]=nu; }
-    });
-    // prune any stale/wrong defaults from earlier versions (only vendor option/boolean fields keep defaults)
-    Object.keys(settings.cfDefaults).forEach(id=>{
-      const f=settings.cfList.find(x=>x.id===id);
-      if(!f || f.targetType!=='vendor' || !(f.type==='boolean'||f.type==='option')) delete settings.cfDefaults[id];
-    });
-    LS.set('zs_settings',settings);
+    const spec=await refreshFields();
     renderCfFields();
     out.innerHTML='Loaded. Trade field → <b>'+(spec?escapeHtml(spec.name):'not found')+'</b>. Defaults set for required vendor fields below.';
   }catch(e){ out.textContent='Could not load fields: '+e.message; }
