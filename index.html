@@ -249,7 +249,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 16 (signed-headers probe)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 17 (range probe)</p>
   </section>
 </main>
 
@@ -799,20 +799,22 @@ document.getElementById('probeFileBtn').onclick=async()=>{
     x.fillStyle='#2f6bff'; x.fillRect(0,0,16,16);
     const durl=c.toDataURL('image/jpeg',0.8);
     const blob=await (await fetch(durl)).blob();
-    log.push('1) blob: size='+blob.size+' type='+blob.type);
-    // step 1: create upload request
-    const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:blob.size,type:blob.type||'image/jpeg'}, createdUploadRequest:{id:{},url:{}}}});
-    const reqId=ur?.createUploadRequest?.createdUploadRequest?.id;
-    const url=ur?.createUploadRequest?.createdUploadRequest?.url;
-    let sh=''; try{ sh=new URL(url).searchParams.get('X-Goog-SignedHeaders')||''; }catch(e){}
-    log.push('2) id='+reqId+' SignedHeaders='+sh);
-    log.push('URL='+url);
-    // PUT bytes to the signed URL; capture GCS error body if it fails
-    try{
-      const put=await fetch(url,{method:'PUT',headers:{'Content-Type':blob.type||'image/jpeg'},body:blob});
-      let extra=''; if(!put.ok){ extra=' :: '+(await put.text()).replace(/\s+/g,' ').slice(0,200); }
-      log.push('3) PUT(withCT) '+put.status+(put.ok?' OK':' FAIL'+extra));
-    }catch(e){ log.push('3) PUT THREW '+e.message); }
+    const S=blob.size, T=blob.type||'image/jpeg';
+    log.push('blob size='+S+' type='+T);
+    // the signed URL requires x-goog-content-length-range; find the value format GCS accepts
+    const ranges=['0,'+S, S+','+S, '0,52428800', '0,104857600', '0,2147483648'];
+    let ok=false;
+    for(const cr of ranges){
+      const ur=await pave({$:{grantKey:settings.grant}, createUploadRequest:{$:{size:S,type:T}, createdUploadRequest:{id:{},url:{}}}});
+      const url=ur?.createUploadRequest?.createdUploadRequest?.url;
+      try{
+        const put=await fetch(url,{method:'PUT',headers:{'Content-Type':T,'x-goog-content-length-range':cr},body:blob});
+        let extra=''; if(!put.ok) extra=' :: '+(await put.text()).replace(/\s+/g,' ').slice(0,110);
+        log.push('range "'+cr+'" -> '+put.status+(put.ok?' OK ✓✓✓':' FAIL'+extra));
+        if(put.ok){ ok=true; break; }
+      }catch(e){ log.push('range "'+cr+'" THREW '+e.message); }
+    }
+    if(ok) log.push('>>> WORKING range format found — photo upload is solved.');
   }catch(e){ log.push('FATAL '+e.message); }
   out.textContent='REAL UPLOAD TEST (screenshot this):\n\n'+log.join('\n\n');
 };
