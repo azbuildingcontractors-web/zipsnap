@@ -242,7 +242,7 @@
       <button class="btn-ghost" id="testBtn">Run test</button>
       <div id="testOut" class="banner hidden" style="margin-top:10px"></div>
     </div>
-    <p class="muted" style="text-align:center">Zipsnap · build 8 (type-aware fields)</p>
+    <p class="muted" style="text-align:center">Zipsnap · build 9 (clean defaults)</p>
   </section>
 </main>
 
@@ -675,6 +675,14 @@ document.getElementById('loadCfBtn').onclick=async()=>{
       if(/coi/i.test(f.name) && /(required|on file)/i.test(f.name) && !settings.cfDefaults[f.id]){
         const no=(f.options||[]).find(o=>/^no$/i.test(o)) || 'No';
         settings.cfDefaults[f.id]=no;
+      }
+    });
+    // clean up bad leftover defaults: "Yes"/"No" only belongs on boolean or option (dropdown) fields,
+    // not on date/text fields (e.g. the COI expiration-date fields)
+    settings.cfList.forEach(f=>{
+      const v=settings.cfDefaults[f.id];
+      if(v!=null && /^(yes|no)$/i.test(String(v)) && f.type!=='boolean' && f.type!=='option'){
+        delete settings.cfDefaults[f.id];
       }
     });
     LS.set('zs_settings',settings);
